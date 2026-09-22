@@ -1,5 +1,5 @@
 ##import matplotlib.pyplot as plt
-import numpy as npgg
+import numpy as np
 #
  
 # --------------------------------------------------
