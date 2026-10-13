@@ -1,0 +1,320 @@
+================================================================================
+ MP-KG-RAG CAPSTONE PROJECT - COMPLETE OVERVIEW
+ Counter-Narrative Generation for Homophobic Hate Speech in Hindi-Hinglish Text
+================================================================================
+Location : D:\NUIG\prj\capstone prj
+Written  : 13 October 2026
+Machine  : Windows 11 Home Single Language (10.0.26200), Ryzen 5 laptop,
+           24 GB RAM, no discrete GPU
+
+
+--------------------------------------------------------------------------------
+1. WHAT THE PROJECT IS
+--------------------------------------------------------------------------------
+The project generates counter-narratives (respectful, evidence-based replies)
+to homophobic hate speech written in English, Hindi (Devanagari) and Hinglish
+(Hindi in Latin script, with code-switching).
+
+It compares four ways of generating a reply with the same language model
+(Qwen3.5-4B):
+
+  1. qwen_zero_shot  - the model answers with no examples and no evidence.
+  2. qwen_few_shot   - the model sees two fixed example replies first.
+  3. kg_rag          - Knowledge-Graph Retrieval-Augmented Generation: the
+                       model receives up to 5 retrieved evidence passages and
+                       must cite them as [E1]..[E5].
+  4. mp_kg_rag       - Multi-Perspective KG-RAG (the main contribution): five
+                       "perspective agents" each analyse the post with the
+                       evidence, a planner merges them into a plan, and a final
+                       step writes the cited counter-narrative.
+
+The five MP-KG-RAG perspectives:
+  fact_checking     Correct only directly supported claims.
+  cultural_context  Give respectful context.
+  harm_reduction    Avoid amplifying harmful language.
+  legal_rights      Use only source-grounded rights claims.
+  persuasion        Suggest an empathetic response.
+
+There is NO model training or fine-tuning anywhere in this project. All
+variants are inference: an existing Qwen model is prompted, grounded with
+retrieved evidence, and its JSON output is validated.
+
+
+--------------------------------------------------------------------------------
+2. FOLDER MAP
+--------------------------------------------------------------------------------
+capstone prj\
+  README.md                        Archive description (production code export).
+  PROJECT_OVERVIEW.txt             This file.
+  config\production.json           Production config (model, server, corpus,
+                                   chunking settings) for the remote GPU VM.
+  work\                            Core Python code:
+    mpkg_rag_core.py                 Corpus registry, chunking, entity catalog,
+                                     semantic graph, graph expansion, RRF fusion,
+                                     reranker evidence selection, thinking split.
+    mpkg_eval_core.py                Evaluation: evidence ledgers, citation
+                                     records, NLI support, chrF, BERTScore config,
+                                     statistics (bootstrap, BH correction, kappa,
+                                     Krippendorff alpha), prompt budget fitting.
+    build_remote_vm_qwen35_mpkg_rag.py      Builds the production notebook.
+    build_kaggle_qwen35_lgbtq_hatespeech_dataset.py
+                                     Builds the dataset-generation notebook.
+    build_semantic_graph_viewer.py   Builds the graph viewer web page.
+    build_viva_architecture_previews.py     Architecture preview pages.
+    export_remote_vm_runtime.py      Exports the notebook as a .py runtime.
+  outputs\
+    remote_vm_qwen35_mpkg_rag.ipynb  PRIMARY production notebook (CUDA only).
+    remote_vm_qwen35_mpkg_rag_runtime.py    Same notebook as a 6,134-line script.
+    kaggle_qwen35_lgbtq_hatespeech_dataset.ipynb   Dataset-generation notebook.
+  tests\                           7 pytest files (contract/regression tests).
+  versions\                        Dataset versions and metrics (see section 3).
+  semantic_graph_source\           Prebuilt knowledge-base artifacts (section 4).
+  semantic_graph_viewer\           Static graph viewer (built on this laptop).
+  docs\superpowers\specs, plans    Design specs and implementation plans
+                                   (folder is now listed in .gitignore).
+  requirements-remote-vm.in/.lock  Locked CUDA environment for the remote VM.
+                                   Do NOT install on the laptop.
+  MP_KG_RAG_Gradio_UI_Windows_Claude_Port\...   Windows Gradio demo (section 7).
+  Main.py                          Bar chart: GPT / Claude / Grok / Gemini on
+                                   BLEU-1, BLEU-2, METEOR, ROUGE.
+  density.py                       Density plot: LLM-CN vs KG-CN vs Multi-Agent CN.
+  *.png                            Plots (model_comparison, model_selection_heatmap,
+                                   cn_quality_density_plot).
+  index.html, script.js, style.css "LinkClean - URL Cleaner" - UNRELATED to this
+                                   project (left over from another project).
+  .venv\                           Laptop Python 3.11 environment (see section 6).
+  .venv.old\                       Broken venv copied from another project; safe
+                                   to delete.
+
+
+--------------------------------------------------------------------------------
+3. DATASET
+--------------------------------------------------------------------------------
+Columns (all versions): ID, Text, Category, Target, Counter Narrative
+
+  versions\final_dataset.xlsx   sheet "Final_Dataset", 1,550 rows - the
+                                canonical production dataset ("1550" run).
+  versions\v1.xlsx              Seed_Formatted, 50 rows
+  versions\v2.xlsx  ...  v5.xlsx   100 / 200 / 400 / 800 rows (growing versions)
+  versions\*_m.xlsx, m2.xlsx    Human-review sheets (original vs edited text and
+                                counter-narrative, modified yes/no, notes).
+  versions\metrics.xlsx         Quality metrics per version.
+  versions\prompt.ods           Prompt notes.
+
+Categories: Homophobic, Non-Homophobic.
+Targets (v5): Lesbians, LGBTQ+ Community, Bisexual Individuals, Gay Men,
+Same-sex Marriage, Transgender Individuals, Pride Community (about 113 rows
+each), plus "No Target" for the 10 non-homophobic rows.
+
+Metrics from metrics.xlsx (V2 / V3 / V4 / V5):
+  Rows                          100 / 200 / 400 / 800
+  Homophobic rows                80 / 162 / 326 / 790
+  Non-homophobic rate (%)        20 / 19 / 18.5 / 1.25
+  Imbalance degree (ideal ~1.0)   1 / 1.368 / 1.022 / 1.009
+  Acceptance rate untouched (%)  89 / 70 / 78 / 90.5
+  Acceptance rate modified (%)   11 / 30 / 22 / 9.5
+  Discarded pairs rate            0 / 0 / 0 / 0
+  HTER all pairs              0.004 / 0.045 / 0.095 / 0.027
+  HTER modified pairs         0.032 / 0.149 / 0.43 / 0.282
+(HTER = normalised edit distance between original and human-edited text;
+lower means less editing was needed.)
+
+Production splits: rows are stratified by Category | Target | script
+(Devanagari / Latin-or-mixed / Tamil) and split 70% train, 20% dev, 10% test
+using a seeded hash (seed 3407). Graph-on and graph-off runs use identical IDs.
+
+
+--------------------------------------------------------------------------------
+4. KNOWLEDGE BASE (semantic_graph_source\)
+--------------------------------------------------------------------------------
+Built earlier on a GPU machine; reused as-is on the laptop. All files verified
+against their SHA-256 hashes.
+
+  chunks.json                  6,431 text chunks from 90 source documents
+  evidence_ledger.json         6,431 evidence rows (one per chunk)
+  semantic_extractions.json    6,431 extraction records (claims per chunk)
+  candidates.json              34,813 entity/citation candidates
+  pages.json                   page-level CPU extraction
+  manifest.json                semantic stage identity (complete = true)
+  semantic_gpu_manifest.json   GPU extraction manifest and artifact hashes
+
+Source types: NGO reports (2,445 chunks), official (1,226), court (991),
+peer-reviewed (751), UN agency (688), survey (304), education (25),
+government (1). Authority scores range 0.72 to 1.0.
+
+Graph (as built for the viewer): 35,618 nodes (90 documents, 5,997 pages,
+6,431 chunks, 21,592 claims, 1,508 entities) and 67,664 edges.
+1,103 claims have invalid spans (reported, not an error).
+
+
+--------------------------------------------------------------------------------
+5. PRODUCTION PIPELINE (remote GPU VM - not runnable on the laptop)
+--------------------------------------------------------------------------------
+Target hardware: one NVIDIA GPU (spec mentions an RTX6000 Pro), CUDA 12.8,
+bitsandbytes 4-bit, xFormers, Triton, Unsloth; optional vLLM server.
+
+Models (pinned revisions in config\production.json):
+  Generator   Qwen/Qwen3.5-4B   rev 3764fa359b9082ea5a1e4a5e3ac3aaf6e9671636
+  Embeddings  BAAI/bge-m3       rev 5617a9f61b028005a4858fdac845db406aefb181
+  Reranker    BAAI/bge-reranker-v2-m3  rev 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+
+Retrieval settings: dense top 12, BM25 top 12, graph top 8, rerank top 5,
+min authority 0.60, min dense score 0.25, min rerank probability 0.55,
+max graph hops 2, RRF constant 60 (weights dense 1.1, bm25 1.0, graph 0.8).
+
+Generation settings: max sequence 4,096 tokens, 768 new tokens per stage,
+192-token thinking budget, temperature 0.6, minimum parse rate 0.98,
+one JSON repair attempt, then the row is quarantined.
+
+Key contracts (must hold in any run):
+  - Evidence ledger frozen before generation; at most 5 passages.
+  - Citations may only use ledger IDs E1..En.
+  - Rows failing prompt budget, parse rate or schema are quarantined, never
+    checkpointed as valid.
+  - Missing text never becomes "nan"; missing scores never become 0.
+  - Frozen split IDs identical for graph-on and graph-off runs.
+
+Rebuild the notebook:  python work\build_remote_vm_qwen35_mpkg_rag.py
+Changing the model: see setup.md section "Change the model to another one"
+(edit config\production.json and the builder, regenerate, rerun tests).
+
+
+--------------------------------------------------------------------------------
+6. LAPTOP SETUP (done in this session)
+--------------------------------------------------------------------------------
+  - Created .venv with Python 3.11.9 (old copied venv moved to .venv.old).
+  - Installed CPU PyTorch 2.14.1 + sentence-transformers, qdrant-client,
+    rank-bm25, pymupdf, pandas, scikit-learn, sacrebleu, rouge-score, nltk,
+    datasets, matplotlib, seaborn, scipy, pytest, ruff.
+  - Installed Ollama 0.40.2 (winget) and pulled qwen3:4b (2.5 GB).
+  - Verified BGE-M3 embeddings on CPU: output shape (1, 1024).
+  - Added .gitignore (.preview/, .venv/, .venv.old/, caches, docs).
+  - Built semantic_graph_viewer\ from semantic_graph_source\ (all integrity
+    checks passed).
+  - Tests: 194 passed, 10 skipped (8 need Playwright, 2 need the raw PDF
+    corpus folder, which is not in this checkout).
+
+Commands:
+  .\.venv\Scripts\Activate.ps1
+  python -m pytest tests/test_mpkg_rag_core.py tests/test_mpkg_eval_core.py tests/test_semantic_graph_viewer.py tests/test_viva_architecture_previews.py -q
+
+  Graph viewer (must be served; opening index.html directly fails in Edge or
+  Chrome because the page loads its data with fetch):
+  .\.venv\Scripts\python.exe -m http.server 8765 --directory semantic_graph_viewer
+  then open http://localhost:8765
+
+
+--------------------------------------------------------------------------------
+7. WINDOWS GRADIO DEMO (MP_KG_RAG_Gradio_UI_Windows_Claude_Port)
+--------------------------------------------------------------------------------
+Path: capstone prj\MP_KG_RAG_Gradio_UI_Windows_Claude_Port\
+      MP_KG_RAG_Gradio_UI_Windows_Claude_Port\
+
+An interactive, single-user web app that runs the full MP-KG-RAG pipeline on
+one input and shows every stage live. Originally written for an Apple-silicon
+Mac (MLX); ported to Windows in this session.
+
+UI layout (3 columns):
+  Workspace       readiness (pipeline / index / history / model), New
+                  conversation, history search, rename, delete, export (JSON or
+                  Markdown).
+  Conversation    chat view, hate-speech text box, editable Target and
+                  Category, Run MP-KG-RAG and Cancel buttons, status line.
+  Live pipeline   10 stage indicators (Metadata, Retrieval, 5 perspectives,
+                  Plan, Final, Validation), frozen evidence ledger table
+                  (evidence ID, passage, source, page, span, integrity hash,
+                  routes, scores), expandable panels per perspective, Planner,
+                  Final synthesis, final metrics.
+
+Port changes:
+  - local_mpkg_demo\ollama_engine.py (new): Ollama HTTP client replacing MLX.
+    Uses the same JSON schemas (sent to Ollama as a decoding constraint),
+    one repair attempt, clear errors for server down / model missing /
+    timeout. Never produces fake output.
+  - config.py, pipeline.py, backends.py, app.py: settings from environment
+    variables; retrieval on CPU by default, CUDA optional.
+  - index_store.py, history.py: fixed Windows file-handling bugs (directory
+    fsync, unclosed SQLite connection, open memmap during folder rename).
+  - work\ scripts: import path fix; smoke test checks Ollama instead of Metal.
+  - New: requirements-windows.txt, setup_windows.ps1, run_demo.ps1,
+    README-windows.md, tests\ (36 tests), .gitignore.
+  - semantic_graph_source\ and the demo video are unchanged (hashes verified).
+
+Environment variables:
+  MPKG_GENERATOR          ollama (default on Windows) or mlx
+  MPKG_OLLAMA_URL         http://localhost:11434 (falls back to OLLAMA_HOST)
+  MPKG_OLLAMA_MODEL       qwen3:4b
+  MPKG_OLLAMA_NUM_CTX     8192
+  MPKG_OLLAMA_TIMEOUT     600 (seconds)
+  MPKG_OLLAMA_KEEP_ALIVE  30m
+  MPKG_RETRIEVAL_DEVICE   auto (= CPU on Windows), cpu, cuda, mps
+
+Commands (PowerShell, inside the demo folder):
+  Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+  .\setup_windows.ps1 -PullModel -BuildIndex     (first time only)
+  .\run_demo.ps1                                 (then open http://127.0.0.1:7860)
+  .\run_demo.ps1 -Model qwen3:8b -Port 7861      (options)
+  .\.venv-local-demo\Scripts\python.exe -m pytest tests -q
+  .\.venv-local-demo\Scripts\python.exe work\smoke_local_mpkg_demo.py --run-model
+
+Results on this laptop:
+  - Retrieval index: 6,431 evidence rows, 90 documents, 1,416 entities,
+    25,697 mentions, 35,485 graph edges. Build took about 11 hours on CPU
+    (benchmark predicted about 2.5 h; the CPU throttled under sustained load).
+  - Unit tests: 36 passed.
+  - Smoke test, English query "I don't think same-sex couples should be
+    allowed to adopt children.": all 10 stages passed, 5 evidence passages,
+    final answer cites E1-E5, citation validation passed, about 10 minutes.
+  - Same query through the Gradio UI: completed in 5 min 29 s, 10/10 stages,
+    validation valid=True, no unknown evidence IDs. Final stage: 3,628 prompt
+    tokens, 346 generated, about 9 tokens/s.
+  - Smoke test, Hinglish query "Gay log bimar hote hain, inka ilaaj hona
+    chahiye...": retrieval abstained (no passage reached reranker probability
+    0.55), so the pipeline correctly refused instead of answering without
+    evidence.
+  - Logs: index_build.log, smoke_run.log, smoke_run_hinglish_abstained.log.
+  - Screenshot: gradio_ui_windows_screenshot.png
+
+Known limitations:
+  - Romanized Hinglish posts often score low against the English-language
+    corpus, so retrieval may refuse. Lowering the 0.55 threshold would change
+    the method.
+  - qwen3:4b tends to list evidence IDs without placing them in the text; the
+    original pipeline then appends "Sources: [E1] ... [E5]" at the end rather
+    than citing claim by claim.
+  - About 5-10 minutes per query on CPU; rebuilding the index takes hours.
+  - The local demo uses qwen3:4b via Ollama, not the pinned Qwen3.5-4B
+    revision of the production run, so its outputs are not directly comparable
+    with production results.
+
+
+--------------------------------------------------------------------------------
+8. WHAT RUNS WHERE
+--------------------------------------------------------------------------------
+  Laptop (CPU)                               Remote GPU VM only
+  ----------------------------------------   ----------------------------------
+  Core / eval code and their tests           Production notebook (CUDA cells)
+  Graph viewer                               Unsloth / bitsandbytes 4-bit Qwen
+  BGE-M3 + reranker (slow but works)         vLLM server, xFormers, Triton
+  Gradio demo with Ollama qwen3:4b           Full 1,550-row x 4-variant run
+  Small smoke runs (a few rows)              NLI / BERTScore / Detoxify metrics
+                                             at full scale
+
+
+--------------------------------------------------------------------------------
+9. OTHER DOCUMENTS
+--------------------------------------------------------------------------------
+  C:\Users\Tanvi\Downloads\setup.md     Laptop setup guide and model-swap steps.
+  docs\superpowers\specs\
+    2026-08-24-qwen35-hatespeech-dataset-notebook-design.md
+        Design of the Kaggle notebook that generates the hate-speech dataset
+        (categories, English / Hindi / Hinglish, platform styles).
+    2026-08-28-production-four-variant-run-design.md
+        Four-variant 1,550-row production run: checkpoints, thinking
+        output, quality gates, completion criteria.
+    2026-08-29-vllm-production-kb25-design.md
+        vLLM serving and knowledge-base expansion with 25 extra PDFs.
+  docs\superpowers\plans\   Implementation plans for the two notebooks.
+  Demo folder: README-windows.md (Windows guide), README-local-mpkg-demo.md
+        (original Mac guide), gradio_demo_5_cases.mp4 (reference video).
+================================================================================

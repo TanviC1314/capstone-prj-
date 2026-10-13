@@ -1,0 +1,37 @@
+# Python environments
+.venv/
+.venv.old/
+.venv-local-demo/
+
+# Python caches and tool output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.preview/
+
+# Local tool settings
+.claude/
+
+# Large generated or downloaded data (rebuild or copy in; not source code)
+semantic_graph_source/
+semantic_graph_source.zip
+semantic_graph_viewer/
+
+# Gradio demo runtime state (index, history, exports, run logs)
+local_mpkg_demo_index/
+local_mpkg_demo_history.sqlite3
+exports/
+*.log
+
+# Office lock and temp files (created while a file is open in Excel/Word)
+~$*
+*.tmp
+
+# Operating-system clutter
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Personal notes folder
+docs

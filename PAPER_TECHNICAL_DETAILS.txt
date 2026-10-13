@@ -1,0 +1,497 @@
+================================================================================
+ MP-KG-RAG: MULTI-PERSPECTIVE KNOWLEDGE-GRAPH RETRIEVAL-AUGMENTED GENERATION
+ FOR COUNTER-NARRATIVES and HOMOPHOBIC HATE SPEECH IN HINDI-HINGLISH TEXT
+ Technical details for writing the research paper
+================================================================================
+All numbers below come from the project's code, configuration, data files
+and the local runs done on 10-13 October 2026, unless marked otherwise.
+Read Section 0 before using any number in the paper.
+
+
+================================================================================
+0. RESEARCH-INTEGRITY NOTES (READ FIRST)
+================================================================================
+0.1  density.py / cn_quality_density_plot.png: the script labels its data as
+     "ILLUSTRATIVE QUALITY SCORES". The 20 values per method (means about
+     0.70, 0.75 and 0.85) were typed by hand, not measured. Do NOT present
+     this figure as an experimental result. Replace it with scores from the
+     real evaluation, or remove it.
+
+0.2  Main.py / model_comparison.png: BLEU-1, BLEU-2, METEOR-like and ROUGE-L
+     scores for GPT, Claude, Grok and Gemini are hard-coded in the script.
+     The repository does not record where they came from (which prompts,
+     which rows, which model versions). Report them only if you can document
+     how they were produced. "METEOR-like" suggests an approximation, not
+     standard METEOR.
+
+0.3  The full production results (four variants x 1,550 rows, automatic
+     metrics, NLI citation scores, human ratings) are NOT in this repository;
+     they were deliberately excluded from the archive. The results tables in
+     the paper must come from those run outputs.
+
+0.4  The local Windows demo uses qwen3:4b via Ollama, not the pinned
+     Qwen3.5-4B checkpoint of the production run. Use the demo only as a
+     qualitative case study, never as a source for comparison numbers.
+
+0.5  The production config evaluates the "test" split by default (148 rows;
+     SPLIT_NAME environment variable). The production design document
+     targets all 1,550 IDs. State in the paper which set was evaluated.
+
+
+================================================================================
+1. PROBLEM AND CONTRIBUTIONS
+================================================================================
+Task: given a homophobic hate-speech (from dataset made using(English, Hindi in Devanagari, or
+code-mixed Hinglish in Latin script) and its target group, generate a
+counter-narrative (CN): a respectful, non-confrontational, factually grounded
+reply that challenges the hateful claim without repeating slurs.
+
+Problems with plain LLM generation that the method addresses:
+  - Hallucinated facts and unverifiable statistics in CNs.
+  - Generic, one-dimensional replies (only "facts" or only "empathy").
+  - Little support for low-resource, code-mixed Hindi-Hinglish input.
+  - No traceability from a CN sentence back to a source.
+
+Candidate contributions (to state in the paper):
+  C1. A 1,550-pair Hindi-Hinglish homophobic hate-speech / counter-narrative
+      dataset, built in five human-reviewed iterations (Section 2).
+  C2. A semantic knowledge graph of 90 authoritative documents (NGO, UN,
+      court, official, peer-reviewed) with span-grounded claims (Section 3).
+  C3. A hybrid retriever: dense + BM25 + typed graph expansion, fused by
+      weighted reciprocal rank fusion and filtered by a cross-encoder with an
+      abstention threshold (Section 4).
+  C4. MP-KG-RAG: five perspective agents, a planner and a final synthesiser,
+      all with schema-constrained JSON output and closed-ledger citations
+      (Section 5).
+  C5. A citation-verification and evaluation protocol: closed evidence
+      ledger, NLI-based joint and leave-one-out entailment with per-language
+      calibrated thresholds, paired permutation tests, and blinded human
+      rating with agreement statistics (Sections 6-7).
+
+
+================================================================================
+2. DATASET
+================================================================================
+2.1 Schema
+  ID | Text (hate speech) | Category | Target | Counter Narrative (reference)
+
+2.2 Construction (iterative, human-in-the-loop)
+  Seed (V1, 50 rows) -> V2 (100) -> V3 (200) -> V4 (400) -> V5 (800)
+  -> Final_Dataset (1,550). Each expansion was LLM-assisted and then
+  human-reviewed: reviewers kept, edited or discarded each pair
+  (text-modified and CN-modified flags, status, notes). Edit effort was
+  measured with HTER.
+
+  A separate design (Kaggle notebook) describes synthetic generation with
+  lukey03/Qwen3.5-9B-abliterated in 4-bit NF4 (fallback
+  wangzhang/Qwen3.5-4B-abliterated), with quotas by language (English /
+  Hindi / Hinglish), platform style (X/Twitter, Instagram comment, meme
+  caption, YouTube, forum), abuse type and severity; JSON-array output;
+  validation (required fields, language heuristics, no URLs, handles or
+  real people); exact and near-duplicate removal (character n-gram TF-IDF
+  cosine); resumable checkpoints. Check which of these steps produced the
+  final rows before describing them in the paper.
+
+2.3 Version quality metrics (versions/metrics.xlsx)
+  Metric                          V2      V3      V4      V5
+  Rows                           100     200     400     800
+  Homophobic rows                 80     162     326     790
+  Non-homophobic rate (%)       20.0    19.0    18.5    1.25
+  Imbalance degree (ideal 1.0)  1.000   1.368   1.022   1.009
+  Acceptance untouched (%)      89.0    70.0    78.0    90.5
+  Acceptance modified (%)       11.0    30.0    22.0     9.5
+  Discarded pairs (%)              0       0       0       0
+  HTER, all pairs              0.004   0.045   0.095   0.027
+  HTER, modified pairs         0.032   0.149   0.430   0.282
+  Definitions: imbalance degree = max target count / min target count
+  (excluding "No Target"); HTER = normalised Levenshtein distance between
+  original and edited text. Repetition rate (repeated normalised 3-grams
+  after stop-word removal) and novelty (1 - max Jaccard similarity) are also
+  defined in the sheet.
+
+2.4 Final dataset statistics (computed from versions/final_dataset.xlsx)
+  Rows 1,550; unique IDs 1,550; no empty references; no duplicate posts.
+  Category:  Homophobic 1,404 (90.6%) | Non-Homophobic 146 (9.4%)
+  Target:    LGBTQ+ Community 214, Gay Men 214, Transgender Individuals 209,
+             Lesbians 206, Bisexual Individuals 202, Same-sex Marriage 184,
+             Pride Community 178, No Target 123, "None" 20
+  Script of post:  Latin / code-mixed 991 (63.9%) | Devanagari 559 (36.1%)
+  Script of CN:    Latin / code-mixed 1,344 | Devanagari 206
+  Post length: mean 86.7 chars (median 86, range 25-338); mean 15.0 words
+  CN length:   mean 147.1 chars (median 136, range 13-300); mean 23.9 words
+  Data issues to fix or report: 20 rows use Target "None" in addition to the
+  123 "No Target" rows (merge the labels); 22 counter-narratives are exact
+  duplicates.
+
+2.5 Splits (deterministic, stratified)
+  Stratum = Category | Target | script bucket (devanagari, latin_or_mixed,
+  tamil): 20 strata. Inside each stratum, IDs are ordered by
+  SHA-256(ID, seed 3407) and assigned by position i: i mod 10 < 7 -> train,
+  7-8 -> dev, 9 -> test.
+  Result: train 1,103 | dev 299 | test 148.
+  The split is frozen with a membership hash; graph-on and graph-off runs use
+  the same IDs.
+
+
+================================================================================
+3. KNOWLEDGE BASE AND SEMANTIC KNOWLEDGE GRAPH
+================================================================================
+3.1 Corpus
+  90 documents (an earlier 95-file corpus, extended by a "KB25" pack of 25
+  catalogued PDFs; content de-duplicated by SHA-256). Every document records
+  URL, publisher, title, year, byte size and SHA-256. PDFs are accepted only
+  with a valid PDF signature, a non-trivial size and a successful parse;
+  failed, HTML, interstitial, corrupt or encrypted files are quarantined.
+  Parser: PyMuPDF 1.26.5, page-aware.
+
+  Each document gets a source type and an authority score in [0, 1]. By chunk:
+  NGO report 2,445 | official 1,226 | court 991 | peer-reviewed 751 |
+  UN agency 688 | survey 304 | education 25 | government 1.
+  Authority scores observed: 0.72-1.00 (0.75: 2,749 chunks; 0.95: 1,742;
+  1.00: 1,226; 0.92: 689). Retrieval only uses chunks with authority >= 0.60.
+
+3.2 Chunking
+  Token-based chunks of 500-900 tokens with 100-token overlap
+  (config: semantic.min_tokens / max_tokens / overlap_tokens).
+  Result: 6,431 chunks; median 2,812 characters (90th percentile 5,351,
+  max 8,864). Each chunk keeps its document ID, page number, character and
+  token spans, and SHA-256 hashes of the document, page and chunk.
+
+3.3 Claim extraction (LLM, schema-constrained)
+  Model: Qwen/Qwen3.5-4B (revision 3764fa35...), bitsandbytes NF4 4-bit,
+  served by vLLM (8 concurrent requests), prompt "semantic-claims.v1".
+  Output schema per chunk:
+    {"claims": [ {"claim": str, "candidate_ids": [str],
+                  "span_start": int>=0, "span_end": int>=1} ]}   max 4 claims
+  Each claim is tied to a character span of the source chunk and to entity
+  candidates found in that chunk. Malformed output gets one repair attempt.
+  Of 6,431 requests, 6,431 were accepted and 0 quarantined (GPU manifest).
+
+  Entity candidates: 34,813 mentions (types include citations, named
+  entities and controlled terms such as LGBTQ, SOGIESC, sexual orientation,
+  gender identity, transgender, homophobia).
+
+3.4 Graph schema
+  Node types: Document, Page, EvidenceChunk, Claim, Entity
+  (+ Mention in the retrieval index).
+  Edge types: document_has_page, page_has_chunk, chunk_asserts_claim,
+  claim_mentions_entity, claim_related_to_claim.
+  Size:
+    Viewer graph: 35,618 nodes (90 documents, 5,997 pages, 6,431 chunks,
+    21,592 claims, 1,508 entities) and 67,664 edges (21,592
+    chunk-asserts-claim, 17,576 claim-mentions-entity, 16,068
+    claim-related-to-claim, 6,431 page-has-chunk, 5,997 document-has-page).
+    1,103 claims (5.1%) have spans that do not match the source text.
+    Retrieval-index graph (after validation and entity canonicalisation):
+    1,416 entities, 25,697 mentions, 35,485 edges over 6,431 evidence chunks.
+
+3.5 Integrity
+  Every stage (corpus, chunks, extraction, ledger) has a stage hash, and
+  downstream stages refuse to run if hashes do not match. The evidence
+  ledger is bound to the semantic stage hash.
+
+
+================================================================================
+4. HYBRID RETRIEVAL
+================================================================================
+4.1 Models (pinned revisions)
+  Dense encoder: BAAI/bge-m3 (rev 5617a9f6...), 1,024-dimensional,
+                 L2-normalised, cosine similarity.
+  Reranker:      BAAI/bge-reranker-v2-m3 (rev 953dc6f6...), cross-encoder,
+                 max length 512.
+  Lexical:       BM25 (Okapi), tokens = lower-cased [\w']+.
+  Vector store:  Qdrant (local mode), exact cosine search.
+
+4.2 Query signature (entity linking of the post)
+  For each post, the LLM receives the target, the post and a closed list of
+  catalogue candidates for the target. It returns
+    {entity_candidate_indices: [{mention_id, candidate_index|null}],
+     predicates[], polarities[], modalities[], desired_stances[]}
+  It never writes entity IDs itself; the selected indices are resolved to
+  catalogue entity IDs. If a post links to no entity, retrieval abstains
+  ("no_linked_entities").
+
+4.3 Three retrieval branches
+  Dense: query "evidence addressing harmful or misleading claims about
+         {target}", top 12, cosine >= 0.25.
+  BM25:  query "{target} {post}", top 12, score > 0.
+  Graph: seeds = dense("evidence addressing {target} {post}") + BM25 seeds,
+         each branch min-max normalised; breadth-first traversal over typed
+         edges up to 2 hops; top 8.
+
+  Graph score of an evidence chunk e (weighted sum of 10 components):
+    S(e) = 2.0*[entity match] + 1.0*[predicate match] + 0.5*[polarity match]
+         + 0.4*[modality match] + 0.8*[stance match] + 0.8*review(e)
+         + 0.8*authority(e) + 0.0*confidence(e) + 1.0*seed(e)
+         + 0.6*(0.75^h)
+    [x] = 1 if any claim connected to e matches the query signature, else 0
+    review: accepted 1.0, reviewed 0.85, unknown 0.0
+    authority in [0, 1]
+    seed = best normalised dense/BM25 seed score
+    h = shortest hop distance from a seed
+    extraction confidence is recorded but weighted 0 (uncalibrated).
+  Rules: a hop-0 seed without claims, or without an entity or predicate
+  match, is never a graph hit; chunks need S(e) > 0. Each result keeps its
+  full path trace (nodes and relations) for auditing.
+
+4.4 Fusion and reranking
+  Weighted reciprocal rank fusion:
+    RRF(d) = sum over b in {dense, bm25, graph} of  w_b / (k + rank_b(d))
+    k = 60, w_dense = 1.1, w_bm25 = 1.0, w_graph = 0.8
+  Cross-encoder scores each (post, chunk) pair; logits become
+  probabilities p = sigmoid(logit).
+  Selection: keep chunks with p >= 0.55, sort by p, take the top 5.
+  If none pass, the system abstains
+  ("all_candidates_below_minimum_rerank_probability").
+
+4.5 Graph ablation
+  The same retrieval is run with the graph branch on and off for every
+  frozen ID. Both runs share the candidate universe. The metrics are overlap,
+  graph-only gain, authority rate and accepted-evidence rate, compared with
+  a paired permutation test (10,000 rounds).
+
+
+================================================================================
+5. GENERATION: FOUR VARIANTS
+================================================================================
+5.1 Generator
+  Qwen/Qwen3.5-4B (rev 3764fa35...), 4-bit NF4 (Unsloth / bitsandbytes,
+  effective 4-bit verified), max sequence 4,096 tokens, seed 3407,
+  temperature 0.6, max 768 new tokens per stage.
+  Thinking mode (two passes): pass 1 generates up to 192 reasoning tokens
+  with thinking on; pass 2 adds that reasoning as private context and
+  generates the final JSON with thinking off, under a JSON-schema constraint
+  (lm-format-enforcer). The reasoning is stored separately from the answer.
+
+5.2 Evidence ledger and prompt fitting
+  Selected passages become a closed ledger E1..En (n <= 5). Each entry has
+  evidence ID, source ID, page locator, document UID, character span,
+  displayed text and SHA-256 hashes; the span text must equal the source
+  substring exactly. If the prompt exceeds the 4,096-token budget, whole
+  lowest-ranked passages are dropped (text is never cut mid-passage). If even
+  the evidence-free prompt does not fit, the row is quarantined.
+
+5.3 Variants
+  (a) Zero-shot: post + target -> final JSON. No evidence.
+  (b) Few-shot: as (a) plus 2 fixed synthetic examples, written separately
+      from the dataset so no test content can leak into the prompt
+      ("few-shot.v1.contamination-safe.static").
+  (c) KG-RAG: post + target + evidence ledger + a fixed plan
+      {claim_focus: "Address the claim respectfully.", tone: empathetic,
+      safety_constraints: [avoid amplification]} -> final JSON with citations.
+  (d) MP-KG-RAG: 5 perspective agents -> planner -> final synthesiser.
+
+5.4 MP-KG-RAG stages (7 generation calls per row)
+  Perspective agents (5 calls), each given the post, target, category and
+  ledger:
+    fact_checking     "Correct only directly supported claims."
+    cultural_context  "Give respectful context."
+    harm_reduction    "Avoid amplifying harmful language."
+    legal_rights      "Use only source-grounded rights claims."
+    persuasion        "Suggest an empathetic response."
+    Output: {perspective, rationale, claims_to_address[],
+             supported_evidence_ids[E#], response_guidance[], risk_flags[],
+             confidence in [0, 1]}
+    Gate: at least 98% of the perspective outputs must parse.
+  Planner (1 call): input = the parsed perspectives (falling back to a
+    compact version if over budget) + ledger.
+    Output: {claim_focus, selected_evidence_ids[E#], response_steps[], tone,
+             factual_constraints[], safety_constraints[]}
+  Final synthesiser (1 call): input = plan + ledger.
+    Instruction: factual claims need inline [E#] citations; with no factual
+    claims, return one approved safe-abstention template and set
+    factual_claims to [].
+    Output: {counter_narrative, cited_evidence_ids[E#], factual_claims[],
+             safety_notes[]}
+  Grounding repair (only if citation checks fail): one extra call with the
+  failure reasons; re-validated.
+
+5.5 Prompt templates (verbatim)
+  Perspective, system: "Think carefully, then return exactly one JSON object
+    after the thinking block."
+  Perspective, user: "Perspective: {name}\nGoal: {goal}\nPost: {post}\n
+    Target: {target}\nCategory: {category}\nEvidence (complete ledger spans
+    only):\n{ledger}\nReturn perspective, rationale, claims_to_address,
+    supported_evidence_ids, response_guidance, risk_flags, confidence. Use
+    only E1...En IDs.\nJSON schema (must be followed exactly): {schema}"
+  Planner, system: "Return one JSON evidence plan only."
+  Final, system: "Write one safe evidence-grounded counter-narrative as JSON
+    only."
+  Baseline, system: "Return exactly one JSON object matching the final
+    response schema. Prompt variant: {zero-shot.v1 | few-shot.v1...}."
+  Ledger line format:
+    "[E#] source={source_id} p. {page} document_uid={uid}
+     span={start}:{end}\n{passage}"
+
+5.6 Robustness rules
+  - One JSON repair attempt (temperature 0, no thinking); after that the row
+    is quarantined with a reason (schema_invalid, prompt_budget,
+    parse_rate, citation_support_failed) and kept out of the results.
+  - Missing text never becomes "nan"; missing scores never become 0 (status
+    fields record why a value is missing).
+  - Append-only per-variant JSONL checkpoints with identity hashes allow a
+    run to resume safely.
+
+
+================================================================================
+6. CITATION VALIDATION
+================================================================================
+6.1 Format checks (all RAG outputs)
+  - Cited IDs must exist in the closed ledger E1..En; no duplicates.
+  - Inline [E#] markers must exactly match cited_evidence_ids.
+  - A response that declares factual claims must contain inline citations.
+
+6.2 Entailment checks
+  NLI model: joeddav/xlm-roberta-large-xnli (rev 07f8772b...), labels
+  contradiction / neutral / entailment.
+  Each CN sentence is a claim. For a claim c with cited passages P:
+    joint support    = entail(concatenation of P, c) >= threshold
+    leave-one-out    = for each p in P, entail(P minus p, c); p is
+                       "necessary" if support drops below the threshold
+  Reported per response: citation precision, citation recall (share of
+  factual claims supported), citation necessity, over-citation count
+  (cited but unnecessary passages), entailment mean.
+  Safe abstention: the system may refuse with an approved template ("I cannot
+  verify this from the available evidence.", or its Hindi / Tamil
+  equivalent); such a response must contain no citations.
+
+6.3 Per-language threshold calibration
+  Calibration data: English facebook/xnli (validation);
+  Hindi and Tamil mteb/IndicXnliPairClassification (test).
+  600 stratified examples per language, at least 50 per label, 2,000
+  bootstrap resamples. The threshold maximises F1. The calibration is
+  accepted only if the lower confidence bounds of accuracy, entailment
+  precision and entailment recall are all >= 0.70.
+
+
+================================================================================
+7. EVALUATION PROTOCOL
+================================================================================
+7.1 Automatic metrics (CN vs reference CN; per language)
+  chrF      Unicode character n-gram F-score, n = 6, beta = 2 (suits
+            Devanagari and code-mixed text).
+  BERTScore FacebookAI/xlm-roberta-large (rev 91703fe2...), multilingual.
+  ROUGE-L   F-measure.
+  METEOR    whitespace tokenisation.
+  Toxicity  Detoxify, on CPU (English model; lower is better).
+  Citation  precision, recall, necessity, entailment (RAG variants only;
+            "not applicable" for the baselines).
+  Language and script checks: output language vs input language; rows
+  without a reference are excluded and counted.
+
+7.2 Statistical testing
+  Comparisons: MP-KG-RAG vs KG-RAG; MP-KG-RAG vs zero-shot;
+  KG-RAG vs zero-shot.
+  Test: paired sign-permutation test on the shared ID set (10,000
+  permutations). Multiple comparisons: Benjamini-Hochberg FDR.
+  Uncertainty: bootstrap 95% confidence intervals of the mean.
+  Each metric records its direction (toxicity: lower is better).
+
+7.3 Human evaluation
+  Sample: up to 200 IDs, stratified by Category | Target | script, all
+  variants. Responses are blinded (R0001...) with a separate key file.
+  10 criteria (ordinal scale): politeness_respect, helpfulness,
+  factuality, safety, empathy, fluency, inclusivity, non_confrontational,
+  contextual_coherence, persuasiveness.
+  At least 2 distinct raters. Agreement: quadratic weighted Cohen's kappa
+  and ordinal Krippendorff's alpha.
+
+
+================================================================================
+8. IMPLEMENTATION AND REPRODUCIBILITY
+================================================================================
+  Production hardware: single NVIDIA GPU VM (RTX6000 Pro in the design
+    document), CUDA 12.8, torch 2.11 + cu128, Triton 3.6, xFormers 0.0.35,
+    bitsandbytes 4-bit, Unsloth; vLLM server (max model length 4,096, GPU
+    memory utilisation 0.8).
+  Reproducibility: pinned 40-character model revisions; hash-locked Python
+    environment (138 resolved packages); seed 3407; SHA-256 identities for
+    the dataset, corpus, code, prompts, configuration and environment;
+    frozen splits; deterministic notebook builder (byte-identical rebuild
+    test); automated contract tests in 7 test files (194 of them pass on
+    CPU; the rest need a GPU, Playwright or the raw PDF corpus).
+  Local CPU deployment (Windows 11, Ryzen 5, 24 GB RAM, no GPU): an
+    interactive Gradio "Pipeline Lab" that runs the same MP-KG-RAG stages
+    with an Ollama-served qwen3:4b, BGE-M3 and reranker on CPU, and shows
+    each stage, the evidence ledger and the citation validation live.
+
+
+================================================================================
+9. OBSERVATIONS FROM THE LOCAL DEPLOYMENT (QUALITATIVE ONLY)
+================================================================================
+  Do not report these as benchmark results (different model, single queries).
+
+  Case 1 (English): "I don't think same-sex couples should be allowed to
+  adopt children."
+    Retrieval: 5 passages kept (E1-E5). All 10 stages completed.
+    Citation validation passed (no unknown IDs).
+    The CN cited legal recognition of joint adoption by same-sex couples in
+    28 UN member states and Yogyakarta Principle 24(a).
+    Latency on CPU: 5 min 29 s end to end (about 70-90 s per perspective /
+    plan / final call); final stage 3,628 prompt tokens, 346 generated
+    tokens, about 9 tokens/s.
+
+  Case 2 (Romanized Hinglish): "Gay log bimar hote hain, inka ilaaj hona
+  chahiye. LGBTQ log samaj ke liye khatra hain."
+    Retrieval abstained: no candidate reached p >= 0.55. The system refused
+    rather than generate an ungrounded reply. This shows the safety
+    behaviour, but also a coverage gap: Romanized Hinglish queries match
+    the English-language evidence corpus poorly.
+
+  Observed generation behaviour: the 4B model often listed evidence IDs in
+  cited_evidence_ids without inline markers. The pipeline then appends
+  "Sources: [E1] ... [E5]", which gives response-level rather than
+  claim-level attribution.
+
+  Cost: building the dense index for 6,431 chunks on CPU took about 1.3 s
+  per chunk in a benchmark, but 11 hours in practice (thermal throttling).
+  It is a one-time cost.
+
+
+================================================================================
+10. LIMITATIONS AND ETHICS
+================================================================================
+  - Cross-lingual gap: the evidence corpus is mostly English, while 64% of
+    posts are Romanized Hinglish and 36% Devanagari. Retrieval abstains
+    more often on Hinglish. Possible fixes: transliteration or translation
+    of the query before retrieval, or Hindi sources in the corpus.
+  - The dataset is imbalanced: 9.4% non-homophobic rows, with label noise
+    ("None" vs "No Target"; 22 duplicate references).
+  - Reference-based metrics (BLEU, ROUGE, METEOR) penalise valid CNs that
+    differ from the single reference. Weight chrF, BERTScore, citation
+    support and human ratings accordingly.
+  - NLI-based support checks a claim against the cited text only; they do
+    not establish real-world truth. Detoxify is English-only.
+  - The LLM-extracted graph contains errors (5.1% of claims have invalid
+    spans). Extraction confidence is uncalibrated and therefore unweighted.
+  - Ethics: the dataset contains synthetic hateful language for research
+    and moderation purposes. No real persons, handles or private data;
+    no operational harm content. Release with a content warning and a
+    research-use licence. The CN generator is meant to assist human
+    moderators, not to reply automatically without review.
+  - No model was trained or fine-tuned. All gains come from retrieval,
+    grounding and multi-perspective prompting.
+
+
+================================================================================
+11. SUGGESTED PAPER STRUCTURE
+================================================================================
+  1  Introduction       problem, low-resource code-mixed setting, C1-C5
+  2  Related work       counter-speech generation (CONAN-style datasets),
+                        RAG / GraphRAG, multi-agent / multi-perspective
+                        prompting, Hindi-Hinglish hate-speech resources,
+                        citation faithfulness evaluation
+  3  Dataset            Section 2 (construction, HTER, statistics, splits)
+  4  Knowledge graph    Section 3
+  5  Method             Sections 4-5 (figure: pipeline diagram; equations
+                        for graph score and RRF; Algorithm 1 for MP-KG-RAG)
+  6  Experimental setup Sections 6-8
+  7  Results            automatic metrics per variant and language; paired
+                        tests with BH-adjusted p-values; graph-on/off
+                        ablation; human ratings with kappa / alpha;
+                        abstention rate; latency
+  8  Analysis           per-perspective contribution, error and abstention
+                        analysis, case studies (Section 9)
+  9  Limitations and ethics   Section 10
+  10 Conclusion
+================================================================================

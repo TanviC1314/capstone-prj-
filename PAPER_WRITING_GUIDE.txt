@@ -1,0 +1,584 @@
+PAPER WRITING GUIDE
+Multi-Perspective, Value-Aligned, Knowledge-Grounded Counter-Narrative
+Generation for Homophobic Hate Speech in Hindi-Hinglish
+==========================================================================
+
+HOW TO USE THIS GUIDE
+This explains the research as a story, step by step, in the order your
+supervisor laid out:
+
+   Dataset -> Knowledge Graph -> Multi-Perspective Reasoning
+           -> Knowledge-Grounded Counter-Narrative Generation -> Evaluation
+
+For each step you'll find:
+   WHAT WE DID      what actually happened in the project
+   HOW IT WORKS     the method, explained plainly, with the real settings
+   WRITE IN PAPER   what that section of the paper should say
+   CHECK            things to confirm with your supervisor or Prasanna
+                    before writing them as fact
+
+Anything in [square brackets] is a gap you need to fill. Don't let an
+agent invent it.
+
+
+--------------------------------------------------------------------------
+THE BIG PICTURE (use this for the Abstract and Introduction)
+--------------------------------------------------------------------------
+Hate speech against LGBTQ+ people on Indian social media is often written
+in Hindi or in Hinglish, a casual mix of Hindi and English typed in Latin
+letters. Deleting posts doesn't change minds. Counter-narratives can:
+calm, respectful replies that challenge the hateful claim and support the
+targeted group. Writing them by hand doesn't scale, and asking a large
+language model (LLM) to write them causes three problems:
+
+   1. The model makes up facts and statistics.
+   2. Replies are shallow and one-sided, for example only "that's wrong"
+      or only "be kind", with no reasoning behind them.
+   3. Code-mixed Hindi-Hinglish is a low-resource setting, so there is
+      little data or tooling to work with.
+
+Our idea: a good human counter-speaker does three things before replying.
+They know the facts, they look at the post from several angles (rights,
+harm, culture, empathy), and they plan what to say. We build a system that
+does the same:
+
+   - a new 1,550-pair Hindi-Hinglish hate-speech / counter-narrative dataset;
+   - a knowledge graph of facts from trustworthy sources (UN, courts, NGOs,
+     official and peer-reviewed documents);
+   - several reasoning "perspective agents" that each analyse the post and
+     agree on a plan before anything is written;
+   - a final counter-narrative that cites its evidence.
+
+We compare it with a plain LLM and with a knowledge-graph-only version,
+using automatic metrics and human judges.
+
+Draft abstract (edit freely; keep the results sentence blank until the
+results are in):
+
+   "Counter-narratives offer a constructive alternative to removing hate
+   speech, but generating them automatically for low-resource, code-mixed
+   languages remains difficult: large language models hallucinate facts
+   and produce generic, single-viewpoint replies. We study homophobic hate
+   speech in Hindi and Hinglish and make three contributions. First, we
+   build a 1,550-pair hate-speech / counter-narrative dataset through five
+   rounds of LLM-assisted expansion with human review, starting from posts
+   collected on social media. Second, we construct a knowledge graph of
+   claims, entities and evidence from 90 authoritative documents. Third,
+   we propose MP-KG-RAG, which retrieves evidence from this graph, analyses
+   each post through multiple value-oriented reasoning perspectives,
+   synthesises a response plan, and only then generates a cited
+   counter-narrative. Compared with zero-shot and chain-of-thought LLM
+   baselines and a knowledge-graph-only system, MP-KG-RAG [RESULTS: e.g.
+   improves factuality and persuasiveness while maintaining safety]
+   according to automatic metrics and human evaluation."
+
+Contributions to list at the end of the Introduction:
+   1. The dataset (Step 1).
+   2. The domain knowledge graph (Step 2).
+   3. The multi-perspective reasoning and planning method (Steps 3-4).
+   4. An evaluation comparing the three approaches, with human ratings
+      (Step 5).
+
+
+==========================================================================
+STEP 1: DATASET CREATION
+==========================================================================
+
+WHAT WE DID
+1. Seed collection. We collected 50 real examples of homophobic hate
+   speech, each paired with a counter-narrative, from several social media
+   platforms [name the platforms you used, e.g. X/Twitter, Instagram,
+   YouTube, Facebook, ...], in text form. This is the seed set (V1).
+   [Say how you chose posts, whether you anonymised them (removed names,
+   handles, links), and who wrote the seed counter-narratives.]
+
+2. Choosing the generator LLM. We gave the same seed set and instructions
+   to four LLMs: GPT, Claude, Grok and Gemini. Each generated a V2 batch
+   of 100 new hate-speech / counter-narrative pairs. We compared the four
+   V2 batches on BLEU-1, BLEU-2, METEOR and ROUGE-L, and on manual
+   inspection of language, grammar and naturalness of the Hindi-Hinglish.
+   GPT scored best on every automatic metric and also read most naturally,
+   so we kept GPT's V2 and used GPT for all later versions.
+
+   Model-selection scores (from Main.py):
+       Model    BLEU-1   BLEU-2   METEOR   ROUGE-L
+       GPT      0.1584   0.0290   0.2052   0.1374
+       Claude   0.1569   0.0228   0.1945   0.1326
+       Grok     0.1481   0.0170   0.1858   0.1357
+       Gemini   0.1307   0.0153   0.1433   0.0907
+   [Say what these were computed against, e.g. the seed counter-narratives
+   or human-edited references. Give the exact model versions (e.g.
+   GPT-4o, Claude 3.5 Sonnet...) and the date. Main.py calls the third
+   metric "METEOR-like"; say whether it is standard METEOR.]
+
+3. Iterative expansion with human review. Each new version was generated
+   by GPT, conditioned on the data so far, and then reviewed by a human
+   who corrected text or counter-narratives where needed:
+       Version    New pairs   Cumulative total
+       V1 (seed)      50            50
+       V2            100           150
+       V3            200           350
+       V4            400           750
+       V5            800         1,550   (final dataset)
+
+4. Measuring quality at each round. For every version we recorded how many
+   pairs the reviewer accepted unchanged, how many were edited, how many
+   were discarded, and how much editing was needed (HTER: the share of
+   text changed by the reviewer; 0 = no change).
+
+                                   V2      V3      V4      V5
+       New rows                   100     200     400     800
+       Homophobic                  80     162     326     790
+       Non-homophobic (%)        20.0    19.0    18.5    1.25
+       Target imbalance (1=even) 1.00    1.37    1.02    1.01
+       Accepted unchanged (%)    89.0    70.0    78.0    90.5
+       Accepted after edit (%)   11.0    30.0    22.0     9.5
+       Discarded (%)                0       0       0       0
+       HTER (all pairs)         0.004   0.045   0.095   0.027
+       HTER (edited pairs)      0.032   0.149   0.430   0.282
+
+   How to read this: by V5, 90.5% of GPT's pairs needed no edits and
+   overall edit effort was low (HTER 0.027). That supports the claim that
+   the expansion process produced usable data. The V4 bump (HTER 0.43 on
+   edited pairs) is worth one honest sentence, e.g. that some rounds needed
+   heavier correction.
+
+HOW IT WORKS: FINAL DATASET PROFILE (computed from final_dataset.xlsx)
+   - 1,550 pairs. Columns: ID, Text (hate speech), Category, Target,
+     Counter Narrative.
+   - Category: Homophobic 1,404 (90.6%), Non-Homophobic 146 (9.4%).
+     The non-homophobic rows act as a small control class.
+   - Targets: LGBTQ+ Community 214, Gay Men 214, Transgender Individuals
+     209, Lesbians 206, Bisexual Individuals 202, Same-sex Marriage 184,
+     Pride Community 178, No Target 143.
+   - Script: 64% of posts are Hinglish in Latin letters, 36% are in
+     Devanagari Hindi.
+   - Length: posts average 15 words, counter-narratives 24 words.
+   - Split for experiments: train 1,103 / dev 299 / test 148, stratified so
+     every category x target x script mix appears in each split.
+
+WRITE IN PAPER (Dataset section)
+   - Why a new dataset: none exists for homophobic hate speech in
+     Hindi-Hinglish with counter-narratives (check related work, e.g.
+     CONAN and Multi-CONAN, which cover other languages and targets).
+   - Seed collection: platforms, selection, anonymisation, ethics.
+   - LLM selection: the four-model comparison (table plus a few sentences
+     on why GPT won, including the human language-quality judgement).
+   - Expansion process: a figure showing V1 -> V5 sizes with a human
+     review loop at each step.
+   - Quality-control table and how to read it.
+   - Final statistics table (category, target, script, lengths, splits).
+   - Ethics: synthetic hateful text exists only for research; no real
+     people or handles; release with a content warning.
+
+CHECK
+   - Fix two small issues before publishing: 20 rows have Target "None"
+     while 123 have "No Target" (merge into one label); 22 reference
+     counter-narratives are exact duplicates (rewrite them or report them).
+   - Who did the human review (you alone, or more people)? If more than
+     one person, can you report agreement between them?
+
+
+==========================================================================
+STEP 2: KNOWLEDGE GRAPH CONSTRUCTION
+==========================================================================
+
+WHAT WE DID
+An LLM can only argue well if it has facts it can rely on. So we built a
+domain knowledge graph (KG) from trustworthy documents: 90 sources covering
+LGBTQ+ rights, health, law, discrimination and hate speech. They include
+UN agency reports, court judgments, official / government documents,
+NGO reports, surveys and peer-reviewed papers. Every source has an
+authority score (0.72 to 1.00) that reflects how trustworthy it is.
+
+An LLM (Qwen3.5-4B) read the documents and extracted:
+   - claims: factual statements, each tied to the exact passage it came
+     from, so every fact can be traced to its source;
+   - entities: groups, organisations, laws, places, concepts (e.g.
+     "transgender people", "Section 377", "WHO", "same-sex marriage").
+
+These became nodes in a graph, connected by typed links.
+
+HOW IT WORKS
+   1. Collect and clean documents. Only valid, readable PDFs are kept;
+      broken or duplicate files are removed. Each document is
+      fingerprinted (SHA-256) so the corpus is reproducible.
+   2. Split into passages. 6,431 overlapping passages of 500-900 tokens,
+      each linked to its document and page.
+   3. Extract claims with the LLM. For each passage the model returns up
+      to 4 claims in a fixed JSON format: the claim, the entities it
+      mentions, and its start and end position in the text. Badly formed
+      output gets one repair attempt. 21,592 claims were extracted.
+   4. Find entities. 34,813 entity mentions, merged into about 1,500
+      distinct entities.
+   5. Build the graph.
+        Document -> Page -> Passage -> Claim -> Entity
+      Links: a document has pages; a page has passages; a passage asserts
+      claims; a claim mentions entities; claims relate to other claims.
+      Final size: about 35,600 nodes and 67,700 links.
+   6. Link each hate-speech post into the graph. For every post, the LLM
+      identifies which graph entities the post is about (e.g. the target
+      "Transgender Individuals") and describes the kind of harmful claim
+      being made. The model must choose from the graph's existing entity
+      list; it cannot invent new ones. This "query signature" is how a
+      post finds its relevant facts.
+
+How this maps onto your supervisor's Step 2 list:
+   Hate targets             -> entity nodes for each target group; each
+                               post is linked to its target entities
+   Harmful claims/narratives -> the claim the post makes (query
+                               signature: claim type, polarity, stance)
+   Supporting/refuting facts -> claim nodes from the 90 sources, each
+                               tied to its exact passage
+   Social/cultural context  -> NGO, survey and UN documents on social
+                               context; the cultural-context perspective
+                               (Step 3)
+   Counter-speech resources -> high-authority passages (rights law, health
+                               bodies, court rulings) used as citations
+
+WRITE IN PAPER (Knowledge Graph section)
+   - Why a KG: grounds the replies in verifiable facts; every fact keeps
+     a link to its source; graph links help find related facts that plain
+     keyword search misses.
+   - Source selection and authority scores: a table of source types and
+     counts, e.g. NGO reports, official, court, peer-reviewed, UN agency,
+     survey.
+   - LLM-based extraction: model, output format, the rule that every claim
+     must point to its exact source passage, the repair step.
+   - Graph schema: a figure of the node and link types.
+   - Statistics: documents, passages, claims, entities, links.
+   - Linking posts to the graph.
+   - Quality: about 5% of extracted claims did not match their source text
+     exactly. Report it honestly; it shows you checked.
+
+CHECK
+   - Your supervisor's Step 2 says to extract entities "from the hate
+     speech dataset". In our system the facts come from the 90 source
+     documents, and the dataset posts are linked into the graph through
+     their targets and claims. Confirm that this matches what your
+     supervisor means. If they also want stereotype nodes extracted from
+     the 1,550 posts (e.g. "gay = disease", "trans = mental illness"),
+     that would be a small extra extraction step, and it would make a nice
+     "harmful narratives" layer in the graph.
+   - "Using llm as in paper": which paper does your supervisor mean? Cite
+     it in this section.
+
+
+==========================================================================
+STEP 3: MULTI-PERSPECTIVE REASONING
+==========================================================================
+
+WHAT WE DID
+Instead of asking the model to reply straight away, we ask it to think
+about the post from five viewpoints first. Each viewpoint is a separate
+"agent" (the same LLM given a different role and goal). Each agent reads
+the post, its target and the retrieved evidence, and writes a short
+structured analysis. A planner agent then combines the five analyses into
+one response plan. Only after that is the counter-narrative written
+(Step 4). This is the "reason first, then respond" idea behind
+multi-perspective value alignment and chain-of-thought reasoning.
+
+HOW IT WORKS
+The five perspectives as implemented, and how they match your supervisor's
+list:
+
+   Implemented         Its goal                            Supervisor's name
+   fact_checking       correct only claims the evidence    Fact-checking
+                       directly supports
+   legal_rights        use only rights claims backed by    Human rights
+                       sources
+   harm_reduction      avoid amplifying harmful language;  Social harmony
+                       de-escalate
+   persuasion          suggest an empathetic, convincing   Empathy / support
+                       response
+   cultural_context    give respectful social and          Educational
+                       cultural context
+
+Each agent returns the same structured analysis:
+   - which harmful claims in the post to address;
+   - its reasoning (rationale);
+   - which evidence passages support its view (by ID: E1, E2, ...);
+   - guidance for the reply;
+   - risk flags (e.g. "avoid repeating the slur");
+   - a confidence score from 0 to 1.
+
+The planner reads all five analyses and returns the plan:
+   - the main claim to focus on;
+   - which evidence to use;
+   - the steps of the reply;
+   - the tone;
+   - factual constraints (what may and may not be claimed);
+   - safety constraints.
+
+Chain of thought: every agent first thinks privately (a short reasoning
+step of up to 192 tokens), then writes its structured answer. The
+reasoning is saved separately, so it can be inspected later and quoted as
+examples in the paper.
+
+Value alignment: each perspective stands for a value the reply should
+respect (truthfulness, rights, harmony, empathy, understanding). The
+planner has to reconcile them, for example being factual without being
+harsh, or empathetic without inventing facts.
+
+WRITE IN PAPER (Method, part 1)
+   - Motivation: single-pass generation produces one-dimensional replies;
+     human counter-speakers weigh several values.
+   - The perspectives: a table of name, value, goal and what it outputs.
+   - The planner and the plan structure.
+   - Chain of thought: thinking before structured output.
+   - A worked example figure: one hateful post -> five short perspective
+     notes -> plan -> final counter-narrative. This is often the most
+     persuasive figure in such papers. Take it from a real run.
+
+CHECK
+   - Perspective names: the code uses fact_checking, cultural_context,
+     harm_reduction, legal_rights and persuasion. Your supervisor's list
+     says human rights, social harmony, fact-checking, empathy/support and
+     educational. Either use the supervisor's names in the paper with the
+     mapping above (the goals match closely), or rename the code's
+     perspectives. Don't publish two different lists. Confirm with your
+     supervisor.
+
+
+==========================================================================
+STEP 4: KNOWLEDGE-GROUNDED COUNTER-NARRATIVE GENERATION
+==========================================================================
+
+WHAT WE DID
+For each hateful post the system:
+   (a) retrieves the most relevant facts from the knowledge base and graph;
+   (b) runs the multi-perspective reasoning and planning from Step 3 on
+       them;
+   (c) writes the final counter-narrative, citing the evidence it used,
+       e.g. "...as recognised by the WHO [E2]".
+
+HOW IT WORKS
+(a) Retrieving evidence: three searches combined.
+   - Meaning-based search (BGE-M3 embeddings): finds passages with
+     similar meaning even when the wording differs.
+   - Keyword search (BM25): finds passages sharing important words with
+     the post and target.
+   - Graph search: starts from the passages found above and follows graph
+     links (up to 2 steps) to related claims and entities. Graph results
+     are scored higher when they match the post's target entities and the
+     type of claim being made, and when they come from more authoritative
+     sources.
+   - The three result lists are merged (reciprocal rank fusion), and a
+     second model (BGE reranker) checks how relevant each passage really
+     is to the post. Only passages with relevance >= 0.55 are kept, at
+     most 5.
+   - If nothing passes, the system refuses to answer rather than produce
+     an ungrounded reply. This is a safety feature worth highlighting.
+
+(b) Evidence ledger: the chosen passages are numbered E1 to E5. The model
+    may only cite these IDs, which makes made-up sources impossible to
+    hide: every citation can be checked.
+
+(c) Writing the reply: the final step receives the plan and the evidence
+    and must produce:
+   - the counter-narrative;
+   - the evidence IDs it used;
+   - the factual claims it makes;
+   - safety notes.
+   Any factual sentence must carry a citation. If the evidence doesn't
+   support a confident reply, the model must use a fixed polite refusal
+   ("I cannot verify this from the available evidence.").
+
+How each target quality of the counter-narrative is achieved:
+   Factually grounded  evidence-only facts, citations E1-E5, refusal when
+                       evidence is missing, citation checking (Step 5)
+   Empathetic          empathy/support perspective; tone set in the plan
+   Non-confrontational social harmony perspective; planner's safety
+                       constraints ("avoid amplification", no slurs)
+   Context-aware       target and category of the post; cultural /
+                       educational perspective; plan built for this post
+
+Example from a test run (English input):
+   Post: "I don't think same-sex couples should be allowed to adopt
+         children."
+   Reply (summary): same-sex couples can legally adopt in 28 UN member
+   states; international human-rights principles (Yogyakarta Principle
+   24) support the right to form a family; denying adoption leaves
+   children without legal protection. All five evidence passages cited.
+   [Use examples from the main experiment in the paper, ideally Hindi and
+   Hinglish ones.]
+
+WRITE IN PAPER (Method, part 2)
+   - A pipeline figure: post -> link to graph -> retrieve
+     (meaning + keyword + graph) -> rerank -> evidence E1-E5 -> five
+     perspectives -> plan -> final cited reply -> citation check.
+   - The retrieval method in a few paragraphs: the reranker threshold and
+     the refusal behaviour.
+   - Grounding rules: closed evidence list, citation required, refusal
+     template.
+   - The four CN qualities: one sentence each on how the design delivers
+     it.
+   - Implementation: the same LLM (Qwen3.5-4B, 4-bit) for all methods, so
+     the comparison is fair; structured JSON output at every step; one
+     automatic repair if the output is malformed; rows that still fail are
+     set aside and reported, not silently dropped.
+
+CHECK
+   - The CN qualities list says "ask Prasanna about these values of CN".
+     Confirm the final list (factual, empathetic, non-confrontational,
+     context-aware, possibly polite or inclusive) before writing.
+
+
+==========================================================================
+STEP 5: EVALUATION
+==========================================================================
+
+WHAT WE COMPARE
+   1. Standard LLM: the same Qwen model replying directly.
+        a. Zero-shot: just the post and an instruction.
+        b. Simple chain of thought: the model thinks briefly, then replies.
+      Prompts were written by hand, not generated with AI, so the baseline
+      prompts don't leak extra knowledge.
+   2. KG-based (KG-RAG): retrieved evidence plus one generation step with a
+      fixed simple plan. No perspectives.
+   3. Multi-perspective value-aligned KG (MP-KG-RAG, ours): retrieved
+      evidence, five perspectives, planner, final reply.
+
+   Comparing 1 vs 2 shows what knowledge adds. Comparing 2 vs 3 shows what
+   multi-perspective reasoning adds on top of knowledge. That is the core
+   argument of the paper.
+
+   An extra experiment: run retrieval with and without the graph search,
+   to show the graph itself helps (more relevant, more authoritative
+   evidence).
+
+   Implementation note: the code also has a few-shot baseline (two fixed
+   examples), and the zero-shot baseline already uses the model's thinking
+   mode, which effectively makes it a chain-of-thought baseline. Decide
+   with your supervisor whether the paper reports zero-shot without
+   thinking plus zero-shot with thinking (CoT), or zero-shot plus few-shot.
+
+HOW TO EVALUATE: the supervisor's criteria and how to measure each
+   Persuasiveness  Human rating (1-5). No reliable automatic metric
+                   exists; this is mainly a human criterion.
+   Helpfulness     Human rating (1-5).
+   Diversity       Automatic: distinct-1 / distinct-2 (share of unique
+                   words or word pairs across replies) and self-BLEU
+                   (lower = more varied). Not yet in the code; quick to add.
+                   The repetition-rate and novelty metrics already used for
+                   the dataset versions can be reused here.
+   Factuality      Automatic: citation precision and recall. A
+                   multilingual NLI model (XLM-RoBERTa-large-XNLI) checks
+                   whether each cited passage actually supports the
+                   sentence that cites it. NLI thresholds are calibrated
+                   for English, Hindi and Tamil. Plus a human factuality
+                   rating.
+   Safety          Automatic: Detoxify toxicity score (lower is better;
+                   English only, so note this limitation for Hindi). Plus a
+                   human safety rating.
+   Similarity to   chrF (character-level, works for Devanagari and
+   reference       Hinglish), BERTScore (multilingual), ROUGE-L, METEOR.
+                   These only show closeness to one reference reply, so
+                   treat them as secondary.
+   Human           Blinded study: up to 200 samples, stratified by target
+   evaluation      and script, all methods mixed and anonymised, at least 2
+                   raters. Criteria built into the code: politeness and
+                   respect, helpfulness, factuality, safety, empathy,
+                   fluency, inclusivity, non-confrontational, contextual
+                   coherence, persuasiveness. Report agreement between
+                   raters (weighted Cohen's kappa and Krippendorff's alpha).
+
+   Statistics: compare methods on the same posts with a paired
+   permutation test (10,000 permutations), correct for multiple
+   comparisons (Benjamini-Hochberg), and report 95% bootstrap confidence
+   intervals.
+
+WRITE IN PAPER (Experiments and Results)
+   - Setup: the same LLM for all methods; test split (148 posts) or all
+     1,550 (say which); hardware; settings.
+   - Table 1: automatic metrics per method (diversity, factuality, safety,
+     similarity), with significance marks.
+   - Table 2: human evaluation per method and criterion, with agreement.
+   - Graph on/off ablation table.
+   - Breakdown by language (Hinglish vs Devanagari) and by target group.
+   - Refusals: how often each method declined, and why.
+   - Discussion: where MP-KG-RAG helps most, where it fails, and two or
+     three example replies side by side.
+
+CHECK
+   - Metrics: the supervisor's notes say "check with Prasanna about the
+     metrics for evaluation". Confirm the final list, especially diversity
+     (not yet implemented) and whether reference metrics (BLEU, ROUGE,
+     METEOR) should appear.
+   - Results: the numbers come from the full experiment run. They are not
+     in this project folder. Don't write any result before you have them.
+   - The plot cn_quality_density_plot.png uses made-up "illustrative"
+     scores (density.py says so). Don't put it in the paper as a result.
+     Redraw it from real scores.
+
+
+==========================================================================
+LIMITATIONS TO DISCUSS (shows maturity; reviewers expect it)
+==========================================================================
+   - Language gap: the knowledge sources are mostly English, while most
+     posts are Hinglish. Retrieval sometimes finds no evidence for Hinglish
+     posts, and the system then refuses. Future work: translate or
+     transliterate posts before searching, or add Hindi sources.
+   - Dataset: GPT-assisted generation may carry GPT's style and biases;
+     the non-homophobic class is small; human review was done by
+     [number] reviewer(s).
+   - Factuality checks confirm a reply matches its cited source, not that
+     the source is true in the real world.
+   - Toxicity scoring is English-only.
+   - The knowledge graph is built automatically, so some extracted claims
+     contain errors (about 5% mismatched their source passage).
+   - No model was trained or fine-tuned: all gains come from knowledge
+     grounding and structured reasoning. This is also a strength (cheap,
+     transparent, easy to update).
+   - Ethics: hateful examples are used only for research; the system is
+     meant to assist human moderators, not to post replies automatically.
+
+
+==========================================================================
+PAPER OUTLINE (8-10 pages)
+==========================================================================
+Title options:
+   - "Think Before You Counter: Multi-Perspective Value-Aligned Reasoning
+      for Knowledge-Grounded Counter-Narratives in Hindi-Hinglish"
+   - "MP-KG-RAG: Multi-Perspective Chain-of-Thought Reasoning over
+      Knowledge Graphs for Counter-Narrative Generation against Homophobic
+      Hate Speech"
+
+1. Introduction
+   Problem, why it matters, why plain LLMs fall short, our idea, the four
+   contributions.
+2. Related Work
+   Counter-speech datasets and generation (CONAN, Multi-CONAN); hate
+   speech in Hindi and code-mixed text; knowledge-grounded and
+   retrieval-augmented generation (RAG, GraphRAG); multi-agent,
+   multi-perspective and chain-of-thought reasoning; value alignment;
+   evaluating factuality and citations.
+3. Dataset (Step 1)
+   Seed collection; four-LLM comparison; GPT expansion V2-V5 with human
+   review; quality table; final statistics; ethics.
+4. Knowledge Graph (Step 2)
+   Sources and authority; LLM extraction; schema figure; statistics;
+   linking posts to the graph.
+5. Method: MP-KG-RAG (Steps 3-4)
+   Pipeline figure; retrieval; evidence ledger; perspective agents;
+   planner; grounded generation; refusal behaviour.
+6. Experimental Setup (Step 5)
+   Methods compared; data split; model and settings; metrics; human study
+   design; statistics.
+7. Results
+   Automatic results; human results; graph ablation; language and target
+   breakdown.
+8. Analysis and Discussion
+   Example replies; what each perspective contributes; error and refusal
+   analysis.
+9. Limitations and Ethics
+10. Conclusion and Future Work
+
+Figures to prepare:
+   1. Overall pipeline (Dataset -> KG -> Perspectives -> Generation ->
+      Evaluation).
+   2. Dataset growth V1 -> V5 with the human review loop.
+   3. Knowledge-graph schema.
+   4. A worked example: post -> five perspectives -> plan -> reply.
+   5. Results charts from the real experiment.
+==========================================================================
